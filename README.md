@@ -1,8 +1,16 @@
 # Flappy Bee
 
-A tiny Flappy Bird–style browser game where you fly a bee through leafy gaps. Reach **score 10** to win — then you’ll be invited to support the [Ginza Honey Bee Project](https://gin-pachi.jp) (銀座ミツバチプロジェクト), Tokyo’s urban beekeeping NPO.
+A Flappy Bird–style browser game starring a bee. Fly through leafy gaps, collect **honey** and **flowers** for bonus points, and when you crash you’ll be invited to support the [Ginza Honey Bee Project](https://gin-pachi.jp) (銀座ミツバチプロジェクト).
 
 This is an unofficial tribute game and is not affiliated with the NPO.
+
+## Scoring
+
+| Action | Points |
+| --- | --- |
+| Pass a pipe | +1 |
+| Collect a flower | +3 |
+| Collect honey | +5 |
 
 ## Play
 
@@ -13,7 +21,7 @@ npm run dev
 
 Open the URL Vite prints (default [http://127.0.0.1:43127](http://127.0.0.1:43127)).
 
-**Controls:** tap / click / Space / ↑ to flap.
+**Controls:** tap / click / Space / ↑ to flap. Sound uses the Web Audio API (no audio files).
 
 ## Build
 

@@ -1,31 +1,45 @@
 import './style.css'
+import { sfx, unlockAudio } from './audio'
 
 declare global {
   interface Window {
     __flappyBee: {
-      triggerWin: () => void
       state: () => {
         mode: string
         beeY: number
         beeVy: number
         score: number
         pipes: number
+        honey: number
+        flowers: number
       }
     }
   }
 }
 
-const params = new URLSearchParams(window.location.search)
-const WIN_SCORE = Math.max(1, Number(params.get('win') || 10) || 10)
 const GINZA_SITE = 'https://gin-pachi.jp'
 const GINZA_DONATE = 'https://syncable.biz/associate/ginpachi/donate'
+const BEST_KEY = 'flappy-bee-best'
 
-type Mode = 'ready' | 'playing' | 'dead' | 'won'
+const PIPE_POINTS = 1
+const HONEY_POINTS = 5
+const FLOWER_POINTS = 3
+
+type Mode = 'start' | 'ready' | 'playing' | 'dead'
+type PickupKind = 'honey' | 'flower'
 
 interface Pipe {
   x: number
   gapY: number
   scored: boolean
+}
+
+interface Pickup {
+  kind: PickupKind
+  x: number
+  y: number
+  bob: number
+  taken: boolean
 }
 
 interface Particle {
@@ -34,8 +48,15 @@ interface Particle {
   vx: number
   vy: number
   life: number
-  maxLife: number
   size: number
+  color: string
+}
+
+interface FloatText {
+  x: number
+  y: number
+  text: string
+  life: number
   color: string
 }
 
@@ -49,10 +70,13 @@ app.innerHTML = `
         <h1>Flappy Bee</h1>
         <p>for Ginza Honey Bee Project</p>
       </div>
-      <div class="score hidden" id="score">0</div>
-      <div class="hint" id="hint">Tap or press Space to fly</div>
+      <div class="score-wrap hidden" id="scoreWrap">
+        <div class="score" id="score">0</div>
+        <div class="score-meta" id="scoreMeta">Honey 0 · Flowers 0</div>
+      </div>
+      <div class="hint hidden" id="hint">Tap or press Space to fly</div>
     </div>
-    <div class="overlay" id="overlay" aria-live="polite">
+    <div class="overlay visible" id="overlay" aria-live="polite">
       <div class="panel" id="panel"></div>
     </div>
   </div>
@@ -61,6 +85,8 @@ app.innerHTML = `
 const canvas = document.querySelector<HTMLCanvasElement>('#game')!
 const ctx = canvas.getContext('2d')!
 const scoreEl = document.querySelector<HTMLDivElement>('#score')!
+const scoreWrapEl = document.querySelector<HTMLDivElement>('#scoreWrap')!
+const scoreMetaEl = document.querySelector<HTMLDivElement>('#scoreMeta')!
 const hintEl = document.querySelector<HTMLDivElement>('#hint')!
 const overlayEl = document.querySelector<HTMLDivElement>('#overlay')!
 const panelEl = document.querySelector<HTMLDivElement>('#panel')!
@@ -78,8 +104,9 @@ const FLAP = -6.2
 const MAX_FALL = 8.5
 const SPAWN_MS = 1600
 const FIRST_PIPE_MS = 2200
+const PICKUP_R = 16
 
-let mode: Mode = 'ready'
+let mode: Mode = 'start'
 let beeY = H * 0.45
 let beeVy = 0
 let beeRot = 0
@@ -87,10 +114,16 @@ let wingPhase = 0
 let spawnTimer = 0
 let groundScroll = 0
 let pipes: Pipe[] = []
+let pickups: Pickup[] = []
 let particles: Particle[] = []
+let floatTexts: FloatText[] = []
 let score = 0
+let pipesPassed = 0
+let honeyGot = 0
+let flowersGot = 0
+let best = Number(localStorage.getItem(BEST_KEY) || 0) || 0
 let clouds = createClouds()
-let flowers = createFlowers()
+let groundBlooms = createGroundBlooms()
 let lastTs = 0
 let animId = 0
 
@@ -103,7 +136,7 @@ function createClouds() {
   }))
 }
 
-function createFlowers() {
+function createGroundBlooms() {
   return Array.from({ length: 9 }, (_, i) => ({
     x: 20 + i * 48,
     bob: Math.random() * Math.PI * 2,
@@ -111,7 +144,66 @@ function createFlowers() {
   }))
 }
 
-function resetGame() {
+function beeMarkHtml() {
+  return `
+    <div class="emoji-bee" aria-hidden="true">
+      <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
+        <ellipse cx="32" cy="36" rx="16" ry="12" fill="#F5C542"/>
+        <path d="M20 32h24M20 38h24M20 44h24" stroke="#2A2118" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="44" cy="28" r="8" fill="#2A2118"/>
+        <circle cx="47" cy="26" r="2.2" fill="#fff"/>
+        <ellipse cx="22" cy="24" rx="10" ry="7" fill="#B8E4FF" fill-opacity=".85" transform="rotate(-18 22 24)"/>
+      </svg>
+    </div>`
+}
+
+function updateScoreHud() {
+  scoreEl.textContent = String(score)
+  scoreMetaEl.textContent = `Honey ${honeyGot} · Flowers ${flowersGot}`
+}
+
+function bumpScore() {
+  scoreEl.classList.remove('bump')
+  void scoreEl.offsetWidth
+  scoreEl.classList.add('bump')
+}
+
+function addScore(points: number, x: number, y: number, label: string, color: string) {
+  score += points
+  updateScoreHud()
+  bumpScore()
+  floatTexts.push({ x, y, text: label, life: 1, color })
+}
+
+function showStartScreen() {
+  mode = 'start'
+  scoreWrapEl.classList.add('hidden')
+  hintEl.classList.add('hidden')
+  panelEl.innerHTML = `
+    ${beeMarkHtml()}
+    <h2>Flappy Bee</h2>
+    <p class="lead">
+      Fly through leafy gaps. Grab <strong>honey (+${HONEY_POINTS})</strong>
+      and <strong>flowers (+${FLOWER_POINTS})</strong> for bonus points.
+      Pipes are worth +${PIPE_POINTS}.
+    </p>
+    <ul class="howto">
+      <li>Tap / Space / ↑ to flap</li>
+      <li>Collect glowing honey &amp; blossoms</li>
+      <li>How long can your hive score go?</li>
+    </ul>
+    ${best > 0 ? `<p class="best">Best score: <strong>${best}</strong></p>` : ''}
+    <div class="actions">
+      <button type="button" class="btn btn-primary" data-action="play">Play</button>
+    </div>
+    <p class="win-note">Tribute to the Ginza Honey Bee Project</p>
+  `
+  overlayEl.classList.add('visible')
+}
+
+function goToReady() {
+  unlockAudio()
+  sfx.start()
   mode = 'ready'
   beeY = H * 0.45
   beeVy = 0
@@ -120,10 +212,15 @@ function resetGame() {
   spawnTimer = SPAWN_MS - FIRST_PIPE_MS
   groundScroll = 0
   pipes = []
+  pickups = []
   particles = []
+  floatTexts = []
   score = 0
-  scoreEl.textContent = '0'
-  scoreEl.classList.add('hidden')
+  pipesPassed = 0
+  honeyGot = 0
+  flowersGot = 0
+  updateScoreHud()
+  scoreWrapEl.classList.add('hidden')
   scoreEl.classList.remove('bump')
   hintEl.classList.remove('hidden')
   hideOverlay()
@@ -135,18 +232,21 @@ function startPlaying() {
   beeVy = FLAP
   spawnTimer = SPAWN_MS - FIRST_PIPE_MS
   hintEl.classList.add('hidden')
-  scoreEl.classList.remove('hidden')
+  scoreWrapEl.classList.remove('hidden')
   hideOverlay()
+  sfx.flap()
   spawnBurst(BEE_X, beeY, '#ffe08a')
 }
 
 function flap() {
+  if (mode === 'start' || mode === 'dead') return
   if (mode === 'ready') {
     startPlaying()
     return
   }
   if (mode === 'playing') {
     beeVy = FLAP
+    sfx.flap()
     spawnBurst(BEE_X - 6, beeY + 8, '#fff3c4')
   }
 }
@@ -161,7 +261,6 @@ function spawnBurst(x: number, y: number, color: string) {
       vx: Math.cos(a) * sp,
       vy: Math.sin(a) * sp - 1,
       life: 1,
-      maxLife: 1,
       size: 2 + Math.random() * 3,
       color,
     })
@@ -173,8 +272,69 @@ function randomGapY() {
   return margin + Math.random() * (H - GROUND - GAP - margin * 2)
 }
 
+function spawnPipe() {
+  const gapY = randomGapY()
+  pipes.push({ x: W + 20, gapY, scored: false })
+
+  // Bonus pickups float in the gap — honey is rarer / higher value
+  const mid = gapY + GAP * 0.5
+  const kind: PickupKind = Math.random() < 0.38 ? 'honey' : 'flower'
+  const offset = (Math.random() - 0.5) * (GAP * 0.35)
+  pickups.push({
+    kind,
+    x: W + 20 + PIPE_W * 0.5,
+    y: mid + offset,
+    bob: Math.random() * Math.PI * 2,
+    taken: false,
+  })
+}
+
+function hideOverlay() {
+  overlayEl.classList.remove('visible')
+}
+
+function die() {
+  mode = 'dead'
+  sfx.die()
+  spawnBurst(BEE_X, beeY, '#ffb4a2')
+  if (score > best) {
+    best = score
+    localStorage.setItem(BEST_KEY, String(best))
+  }
+  showDeathDonation()
+}
+
+function showDeathDonation() {
+  panelEl.innerHTML = `
+    ${beeMarkHtml()}
+    <h2>Game over</h2>
+    <p class="score-big">Score <strong>${score}</strong></p>
+    <p class="breakdown">
+      Pipes ×${pipesPassed} (+${pipesPassed * PIPE_POINTS}) ·
+      Honey ×${honeyGot} (+${honeyGot * HONEY_POINTS}) ·
+      Flowers ×${flowersGot} (+${flowersGot * FLOWER_POINTS})
+      ${best > 0 ? `<br/>Best: <strong>${best}</strong>` : ''}
+    </p>
+    <p>
+      Please support the <strong>Ginza Honey Bee Project</strong> —
+      Tokyo’s urban beekeeping NPO connecting people, city, and nature.
+    </p>
+    <div class="actions">
+      <a class="btn btn-primary" href="${GINZA_DONATE}" target="_blank" rel="noopener noreferrer">
+        Support the project
+      </a>
+      <a class="btn btn-secondary" href="${GINZA_SITE}" target="_blank" rel="noopener noreferrer">
+        Visit gin-pachi.jp
+      </a>
+      <button type="button" class="btn btn-ghost" data-action="again">Play again</button>
+      <button type="button" class="btn btn-ghost" data-action="menu">Back to start</button>
+    </div>
+    <p class="win-note">Unofficial tribute game · not affiliated with the NPO</p>
+  `
+  overlayEl.classList.add('visible')
+}
+
 function update(dt: number) {
-  // Normalize to a 60fps step so physics stay stable on high-refresh displays
   const t = Math.min(dt, 32) / (1000 / 60)
 
   wingPhase += t * 0.45
@@ -182,8 +342,10 @@ function update(dt: number) {
     c.x -= c.speed * t
     if (c.x < -100) c.x = W + 60
   }
-  for (const f of flowers) f.bob += t * 0.065
-  groundScroll = (groundScroll + PIPE_SPEED * t) % (W + 40)
+  for (const f of groundBlooms) f.bob += t * 0.065
+  if (mode === 'playing' || mode === 'ready') {
+    groundScroll = (groundScroll + PIPE_SPEED * t * (mode === 'playing' ? 1 : 0.35)) % (W + 40)
+  }
 
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i]
@@ -194,7 +356,14 @@ function update(dt: number) {
     if (p.life <= 0) particles.splice(i, 1)
   }
 
-  if (mode === 'ready') {
+  for (let i = floatTexts.length - 1; i >= 0; i--) {
+    const f = floatTexts[i]
+    f.y -= 0.7 * t
+    f.life -= t * 0.025
+    if (f.life <= 0) floatTexts.splice(i, 1)
+  }
+
+  if (mode === 'start' || mode === 'ready') {
     beeY = H * 0.45 + Math.sin(wingPhase * 1.4) * 8
     beeRot = Math.sin(wingPhase) * 0.12
     return
@@ -209,26 +378,44 @@ function update(dt: number) {
   spawnTimer += dt
   if (spawnTimer >= SPAWN_MS) {
     spawnTimer = 0
-    pipes.push({ x: W + 20, gapY: randomGapY(), scored: false })
+    spawnPipe()
   }
 
   for (const pipe of pipes) {
     pipe.x -= PIPE_SPEED * t
     if (!pipe.scored && pipe.x + PIPE_W < BEE_X - BEE_R * 0.2) {
       pipe.scored = true
-      score += 1
-      scoreEl.textContent = String(score)
-      scoreEl.classList.remove('bump')
-      void scoreEl.offsetWidth
-      scoreEl.classList.add('bump')
+      pipesPassed += 1
+      sfx.pipe()
+      addScore(PIPE_POINTS, BEE_X + 24, beeY - 18, `+${PIPE_POINTS}`, '#ffffff')
       spawnBurst(BEE_X + 20, beeY, '#ffd76a')
-      if (score >= WIN_SCORE) {
-        win()
-        return
-      }
     }
   }
   pipes = pipes.filter((p) => p.x > -PIPE_W - 20)
+
+  for (const item of pickups) {
+    if (item.taken) continue
+    item.x -= PIPE_SPEED * t
+    item.bob += t * 0.12
+    const dy = Math.sin(item.bob) * 6
+    const dx = item.x - BEE_X
+    const dyy = item.y + dy - beeY
+    if (dx * dx + dyy * dyy < (BEE_R + PICKUP_R) * (BEE_R + PICKUP_R)) {
+      item.taken = true
+      if (item.kind === 'honey') {
+        honeyGot += 1
+        sfx.honey()
+        addScore(HONEY_POINTS, item.x, item.y, `+${HONEY_POINTS}`, '#f5c542')
+        spawnBurst(item.x, item.y, '#ffe08a')
+      } else {
+        flowersGot += 1
+        sfx.flower()
+        addScore(FLOWER_POINTS, item.x, item.y, `+${FLOWER_POINTS}`, '#ff7eb6')
+        spawnBurst(item.x, item.y, '#ffb7d5')
+      }
+    }
+  }
+  pickups = pickups.filter((p) => !p.taken && p.x > -40)
 
   if (beeY + BEE_R > H - GROUND || beeY - BEE_R < 0) {
     die()
@@ -255,68 +442,6 @@ function hitsPipe(pipe: Pipe) {
   return by - r < topBottom || by + r > gapBottom
 }
 
-function die() {
-  mode = 'dead'
-  spawnBurst(BEE_X, beeY, '#ffb4a2')
-  showOverlay('dead')
-}
-
-function win() {
-  mode = 'won'
-  spawnBurst(BEE_X, beeY, '#ffe08a')
-  spawnBurst(BEE_X, beeY - 20, '#fff')
-  showOverlay('won')
-}
-
-function hideOverlay() {
-  overlayEl.classList.remove('visible')
-}
-
-function showOverlay(kind: 'dead' | 'won') {
-  const beeMark = `
-    <div class="emoji-bee" aria-hidden="true">
-      <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
-        <ellipse cx="32" cy="36" rx="16" ry="12" fill="#F5C542"/>
-        <path d="M20 32h24M20 38h24M20 44h24" stroke="#2A2118" stroke-width="3.5" stroke-linecap="round"/>
-        <circle cx="44" cy="28" r="8" fill="#2A2118"/>
-        <circle cx="47" cy="26" r="2.2" fill="#fff"/>
-        <ellipse cx="22" cy="24" rx="10" ry="7" fill="#B8E4FF" fill-opacity=".85" transform="rotate(-18 22 24)"/>
-      </svg>
-    </div>`
-
-  if (kind === 'won') {
-    panelEl.innerHTML = `
-      ${beeMark}
-      <h2>You made it!</h2>
-      <p>
-        Score ${WIN_SCORE} — the hive is buzzing.
-        Please support the <strong>Ginza Honey Bee Project</strong>,
-        Tokyo’s urban beekeeping NPO connecting people, city, and nature.
-      </p>
-      <div class="actions">
-        <a class="btn btn-primary" href="${GINZA_DONATE}" target="_blank" rel="noopener noreferrer">
-          Support the project
-        </a>
-        <a class="btn btn-secondary" href="${GINZA_SITE}" target="_blank" rel="noopener noreferrer">
-          Visit gin-pachi.jp
-        </a>
-        <button type="button" class="btn btn-ghost" data-action="again">Play again</button>
-      </div>
-      <p class="win-note">Unofficial tribute game · not affiliated with the NPO</p>
-    `
-  } else {
-    panelEl.innerHTML = `
-      ${beeMark}
-      <h2>Ouch!</h2>
-      <p>Score: <strong>${score}</strong> / ${WIN_SCORE}. Reach ${WIN_SCORE} to help the hive — and support Ginza’s bees.</p>
-      <div class="actions">
-        <button type="button" class="btn btn-primary" data-action="again">Try again</button>
-      </div>
-    `
-  }
-  overlayEl.classList.add('visible')
-}
-
 function drawSky() {
   const g = ctx.createLinearGradient(0, 0, 0, H)
   g.addColorStop(0, '#6ebef0')
@@ -325,7 +450,6 @@ function drawSky() {
   ctx.fillStyle = g
   ctx.fillRect(0, 0, W, H)
 
-  // soft sun glow
   const sun = ctx.createRadialGradient(W * 0.82, 70, 10, W * 0.82, 70, 120)
   sun.addColorStop(0, 'rgba(255, 236, 150, 0.85)')
   sun.addColorStop(1, 'rgba(255, 236, 150, 0)')
@@ -371,7 +495,6 @@ function drawLeafPipe(x: number, y: number, w: number, h: number, top: boolean) 
   roundRect(x, y, w, h, 10)
   ctx.fill()
 
-  // rim / mouth
   const rimH = 22
   const rimY = top ? y + h - rimH : y
   ctx.fillStyle = '#245c36'
@@ -381,7 +504,6 @@ function drawLeafPipe(x: number, y: number, w: number, h: number, top: boolean) 
   roundRect(x - 2, rimY + 4, w + 4, rimH - 8, 6)
   ctx.fill()
 
-  // leaf nubs
   ctx.fillStyle = '#3f9156'
   for (let i = 0; i < Math.floor(h / 36); i++) {
     const ly = top ? y + 18 + i * 36 : y + h - 28 - i * 36
@@ -418,16 +540,17 @@ function drawGround() {
   ctx.fillStyle = '#7ad06a'
   ctx.fillRect(0, y, W, 10)
 
-  for (const f of flowers) {
+  for (const f of groundBlooms) {
     const fx = ((f.x - groundScroll) % (W + 40) + W + 40) % (W + 40) - 20
     const fy = y + 28 + Math.sin(f.bob) * 3
-    drawFlower(fx, fy, f.hue)
+    drawFlowerSprite(fx, fy, f.hue, 1)
   }
 }
 
-function drawFlower(x: number, y: number, hue: number) {
+function drawFlowerSprite(x: number, y: number, hue: number, scale: number) {
   ctx.save()
   ctx.translate(x, y)
+  ctx.scale(scale, scale)
   ctx.fillStyle = `hsl(${hue} 78% 58%)`
   for (let i = 0; i < 5; i++) {
     const a = (i / 5) * Math.PI * 2
@@ -442,31 +565,75 @@ function drawFlower(x: number, y: number, hue: number) {
   ctx.restore()
 }
 
+function drawHoneySprite(x: number, y: number, pulse: number) {
+  ctx.save()
+  ctx.translate(x, y)
+  ctx.scale(pulse, pulse)
+
+  const glow = ctx.createRadialGradient(0, 0, 2, 0, 0, 22)
+  glow.addColorStop(0, 'rgba(255, 214, 90, 0.55)')
+  glow.addColorStop(1, 'rgba(255, 214, 90, 0)')
+  ctx.fillStyle = glow
+  ctx.beginPath()
+  ctx.arc(0, 0, 22, 0, Math.PI * 2)
+  ctx.fill()
+
+  // droplet
+  ctx.fillStyle = '#f0b429'
+  ctx.beginPath()
+  ctx.moveTo(0, -14)
+  ctx.bezierCurveTo(12, -4, 11, 10, 0, 14)
+  ctx.bezierCurveTo(-11, 10, -12, -4, 0, -14)
+  ctx.fill()
+  ctx.fillStyle = '#ffe566'
+  ctx.beginPath()
+  ctx.ellipse(-3, -2, 3.5, 5, -0.4, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+}
+
+function drawPickups() {
+  for (const item of pickups) {
+    if (item.taken) continue
+    const y = item.y + Math.sin(item.bob) * 6
+    if (item.kind === 'honey') {
+      drawHoneySprite(item.x, y, 1 + Math.sin(item.bob * 2) * 0.08)
+    } else {
+      const hue = 330 + Math.sin(item.bob) * 12
+      drawFlowerSprite(item.x, y, hue, 1.55)
+      // soft glow ring
+      ctx.strokeStyle = 'rgba(255, 150, 200, 0.45)'
+      ctx.lineWidth = 2
+      ctx.beginPath()
+      ctx.arc(item.x, y, 16, 0, Math.PI * 2)
+      ctx.stroke()
+    }
+  }
+}
+
 function drawBee() {
   ctx.save()
   ctx.translate(BEE_X, beeY)
   ctx.rotate(beeRot)
 
-  const flap = Math.sin(wingPhase * (mode === 'playing' ? 18 : 8))
+  const flapAmt = Math.sin(wingPhase * (mode === 'playing' ? 18 : 8))
 
-  // wings
   ctx.fillStyle = 'rgba(190, 230, 255, 0.75)'
   ctx.save()
-  ctx.rotate(-0.5 + flap * 0.35)
+  ctx.rotate(-0.5 + flapAmt * 0.35)
   ctx.beginPath()
   ctx.ellipse(-8, -16, 16, 9, 0, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 
   ctx.save()
-  ctx.rotate(0.35 - flap * 0.35)
+  ctx.rotate(0.35 - flapAmt * 0.35)
   ctx.fillStyle = 'rgba(210, 240, 255, 0.65)'
   ctx.beginPath()
   ctx.ellipse(-14, -4, 14, 8, 0, 0, Math.PI * 2)
   ctx.fill()
   ctx.restore()
 
-  // body
   const body = ctx.createLinearGradient(-18, 0, 18, 0)
   body.addColorStop(0, '#f7d056')
   body.addColorStop(1, '#e9a820')
@@ -475,7 +642,6 @@ function drawBee() {
   ctx.ellipse(0, 0, 20, 14, 0, 0, Math.PI * 2)
   ctx.fill()
 
-  // stripes
   ctx.strokeStyle = '#2a2118'
   ctx.lineWidth = 4.5
   ctx.lineCap = 'round'
@@ -486,13 +652,11 @@ function drawBee() {
     ctx.stroke()
   }
 
-  // head
   ctx.fillStyle = '#2a2118'
   ctx.beginPath()
   ctx.arc(16, -2, 9, 0, Math.PI * 2)
   ctx.fill()
 
-  // eye
   ctx.fillStyle = '#fff'
   ctx.beginPath()
   ctx.arc(19, -4, 2.6, 0, Math.PI * 2)
@@ -502,7 +666,6 @@ function drawBee() {
   ctx.arc(19.6, -4, 1.2, 0, Math.PI * 2)
   ctx.fill()
 
-  // antennae
   ctx.strokeStyle = '#2a2118'
   ctx.lineWidth = 2
   ctx.beginPath()
@@ -517,7 +680,6 @@ function drawBee() {
   ctx.arc(22, -22, 2, 0, Math.PI * 2)
   ctx.fill()
 
-  // stinger hint
   ctx.fillStyle = '#2a2118'
   ctx.beginPath()
   ctx.moveTo(-20, 0)
@@ -540,13 +702,31 @@ function drawParticles() {
   ctx.globalAlpha = 1
 }
 
+function drawFloatTexts() {
+  ctx.save()
+  ctx.font = '700 18px Fredoka, sans-serif'
+  ctx.textAlign = 'center'
+  for (const f of floatTexts) {
+    ctx.globalAlpha = Math.max(0, f.life)
+    ctx.fillStyle = f.color
+    ctx.strokeStyle = 'rgba(42,33,24,0.35)'
+    ctx.lineWidth = 3
+    ctx.strokeText(f.text, f.x, f.y)
+    ctx.fillText(f.text, f.x, f.y)
+  }
+  ctx.restore()
+  ctx.globalAlpha = 1
+}
+
 function render() {
   drawSky()
   drawClouds()
   drawPipes()
+  drawPickups()
   drawGround()
   drawBee()
   drawParticles()
+  drawFloatTexts()
 }
 
 function loop(ts: number) {
@@ -559,22 +739,28 @@ function loop(ts: number) {
 
 function onPointer(e: Event) {
   e.preventDefault()
-  if (mode === 'dead' || mode === 'won') return
+  if (mode === 'start' || mode === 'dead') return
   flap()
 }
 
 function onKey(e: KeyboardEvent) {
   if (e.code === 'Space' || e.code === 'ArrowUp') {
     e.preventDefault()
-    if (mode === 'dead' || mode === 'won') {
+    if (mode === 'dead') {
       if (e.repeat) return
-      resetGame()
+      goToReady()
+      return
+    }
+    if (mode === 'start') {
+      if (e.repeat) return
+      goToReady()
       return
     }
     if (!e.repeat) flap()
   }
-  if (e.code === 'Enter' && (mode === 'dead' || mode === 'won')) {
-    resetGame()
+  if (e.code === 'Enter') {
+    if (mode === 'dead') goToReady()
+    if (mode === 'start') goToReady()
   }
 }
 
@@ -583,24 +769,28 @@ window.addEventListener('keydown', onKey)
 
 overlayEl.addEventListener('click', (e) => {
   const t = e.target as HTMLElement
-  if (t.closest('[data-action="again"]')) {
-    resetGame()
+  if (t.closest('[data-action="play"]') || t.closest('[data-action="again"]')) {
+    goToReady()
+  }
+  if (t.closest('[data-action="menu"]')) {
+    showStartScreen()
   }
 })
 
-resetGame()
+showStartScreen()
 animId = requestAnimationFrame(loop)
 
-// Dev/demo helper for screenshots and manual QA (not used by normal play)
 Object.assign(window, {
   __flappyBee: {
-    triggerWin: () => {
-      score = WIN_SCORE
-      scoreEl.textContent = String(score)
-      scoreEl.classList.remove('hidden')
-      win()
-    },
-    state: () => ({ mode, beeY, beeVy, score, pipes: pipes.length }),
+    state: () => ({
+      mode,
+      beeY,
+      beeVy,
+      score,
+      pipes: pipes.length,
+      honey: honeyGot,
+      flowers: flowersGot,
+    }),
   },
 })
 
