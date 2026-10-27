@@ -31,6 +31,8 @@ type PickupKind = 'honey' | 'flower'
 interface Pipe {
   x: number
   gapY: number
+  /** Vertical opening height (varies per pipe). */
+  gap: number
   scored: boolean
 }
 
@@ -97,13 +99,19 @@ const GROUND = 84
 const BEE_X = W * 0.28
 const BEE_R = 22
 const PIPE_W = 72
-const GAP = 190
+const GAP_MIN = 155
+const GAP_MAX = 225
 const PIPE_SPEED = 2.15
 const GRAVITY = 0.28
 const FLAP = -6.2
 const MAX_FALL = 8.5
-const SPAWN_MS = 1600
-const FIRST_PIPE_MS = 2200
+/** Horizontal gap between pipe columns, in world px (varies). */
+const SPACING_MIN = 175
+const SPACING_MAX = 360
+/** Below this spacing, bonuses must sit inside the pipe opening. */
+const SHORT_SPACING = 240
+const FIRST_PIPE_MS = 2100
+const PICKUP_CHANCE = 0.42
 const PICKUP_R = 16
 
 let mode: Mode = 'start'
@@ -112,6 +120,9 @@ let beeVy = 0
 let beeRot = 0
 let wingPhase = 0
 let spawnTimer = 0
+let nextSpawnMs = FIRST_PIPE_MS
+let lastSpacingPx = 260
+let lastPipe: Pipe | null = null
 let groundScroll = 0
 let pipes: Pipe[] = []
 let pickups: Pickup[] = []
@@ -126,6 +137,17 @@ let clouds = createClouds()
 let groundBlooms = createGroundBlooms()
 let lastTs = 0
 let animId = 0
+
+function rand(min: number, max: number) {
+  return min + Math.random() * (max - min)
+}
+
+/** Convert a horizontal spacing (px) into spawn delay (ms) at current pipe speed. */
+function spacingToMs(spacingPx: number) {
+  // PIPE_SPEED is per 60fps frame; distance/frame ≈ PIPE_SPEED
+  const frames = spacingPx / PIPE_SPEED
+  return frames * (1000 / 60)
+}
 
 function createClouds() {
   return Array.from({ length: 5 }, (_, i) => ({
@@ -209,7 +231,10 @@ function goToReady() {
   beeVy = 0
   beeRot = 0
   wingPhase = 0
-  spawnTimer = SPAWN_MS - FIRST_PIPE_MS
+  spawnTimer = 0
+  nextSpawnMs = FIRST_PIPE_MS
+  lastSpacingPx = 260
+  lastPipe = null
   groundScroll = 0
   pipes = []
   pickups = []
@@ -230,7 +255,9 @@ function startPlaying() {
   if (mode === 'playing') return
   mode = 'playing'
   beeVy = FLAP
-  spawnTimer = SPAWN_MS - FIRST_PIPE_MS
+  spawnTimer = 0
+  nextSpawnMs = FIRST_PIPE_MS
+  lastPipe = null
   hintEl.classList.add('hidden')
   scoreWrapEl.classList.remove('hidden')
   hideOverlay()
@@ -267,26 +294,81 @@ function spawnBurst(x: number, y: number, color: string) {
   }
 }
 
-function randomGapY() {
-  const margin = 110
-  return margin + Math.random() * (H - GROUND - GAP - margin * 2)
+function randomGapSize() {
+  return rand(GAP_MIN, GAP_MAX)
 }
 
-function spawnPipe() {
-  const gapY = randomGapY()
-  pipes.push({ x: W + 20, gapY, scored: false })
+function randomGapY(gap: number, preferNear?: number) {
+  const margin = 95
+  const minY = margin
+  const maxY = H - GROUND - gap - margin
+  if (maxY <= minY) return minY
+  let y = rand(minY, maxY)
+  // Softly pull toward previous gap so height changes, but stays flyable
+  if (preferNear != null) {
+    const maxJump = 130
+    y = Math.max(minY, Math.min(maxY, preferNear + rand(-maxJump, maxJump)))
+  }
+  return y
+}
 
-  // Bonus pickups float in the gap — honey is rarer / higher value
-  const mid = gapY + GAP * 0.5
-  const kind: PickupKind = Math.random() < 0.38 ? 'honey' : 'flower'
-  const offset = (Math.random() - 0.5) * (GAP * 0.35)
+function maybeSpawnBonus(pipe: Pipe, spacingPx: number) {
+  if (Math.random() > PICKUP_CHANCE) return
+
+  const kind: PickupKind = Math.random() < 0.35 ? 'honey' : 'flower'
+  const pad = PICKUP_R + BEE_R * 0.35
+  let x: number
+  let y: number
+
+  if (spacingPx < SHORT_SPACING) {
+    // Tight run — keep the bonus inside this pipe's opening so it's reachable
+    x = pipe.x + PIPE_W * 0.5 + rand(-8, 8)
+    const top = pipe.gapY + pad
+    const bot = pipe.gapY + pipe.gap - pad
+    y = top < bot ? rand(top, bot) : pipe.gapY + pipe.gap * 0.5
+  } else {
+    // Wide run — place somewhere in the open stretch; often high, still clear of pipes
+    const prevRight = lastPipe ? lastPipe.x + PIPE_W : pipe.x - spacingPx
+    const openLeft = prevRight + 28
+    const openRight = pipe.x - 28
+    x = openLeft < openRight ? rand(openLeft, openRight) : pipe.x - spacingPx * 0.45
+
+    // Prefer the upper sky on long gaps, but stay below the ceiling / above ground
+    const highTop = 70
+    const highBot = Math.min(H * 0.38, pipe.gapY + pipe.gap * 0.35)
+    if (Math.random() < 0.7 && highBot > highTop + 20) {
+      y = rand(highTop, highBot)
+    } else {
+      // Alternate: mid-corridor between previous & current openings
+      const midA = lastPipe ? lastPipe.gapY + lastPipe.gap * 0.5 : H * 0.4
+      const midB = pipe.gapY + pipe.gap * 0.5
+      y = (midA + midB) * 0.5 + rand(-36, 36)
+      y = Math.max(70, Math.min(H - GROUND - 50, y))
+    }
+  }
+
   pickups.push({
     kind,
-    x: W + 20 + PIPE_W * 0.5,
-    y: mid + offset,
+    x,
+    y,
     bob: Math.random() * Math.PI * 2,
     taken: false,
   })
+}
+
+function spawnPipe() {
+  const gap = randomGapSize()
+  const gapY = randomGapY(gap, lastPipe?.gapY)
+  const pipe: Pipe = { x: W + 20, gapY, gap, scored: false }
+  pipes.push(pipe)
+
+  // Spacing used for the stretch leading into this pipe
+  maybeSpawnBonus(pipe, lastSpacingPx)
+  lastPipe = pipe
+
+  // Roll the next horizontal gap (varies distance between pipes)
+  lastSpacingPx = rand(SPACING_MIN, SPACING_MAX)
+  nextSpawnMs = spacingToMs(lastSpacingPx)
 }
 
 function hideOverlay() {
@@ -376,7 +458,7 @@ function update(dt: number) {
   beeRot = Math.max(-0.55, Math.min(1.1, beeVy * 0.09))
 
   spawnTimer += dt
-  if (spawnTimer >= SPAWN_MS) {
+  if (spawnTimer >= nextSpawnMs) {
     spawnTimer = 0
     spawnPipe()
   }
@@ -438,7 +520,7 @@ function hitsPipe(pipe: Pipe) {
   const right = pipe.x + PIPE_W
   if (bx + r < left || bx - r > right) return false
   const topBottom = pipe.gapY
-  const gapBottom = pipe.gapY + GAP
+  const gapBottom = pipe.gapY + pipe.gap
   return by - r < topBottom || by + r > gapBottom
 }
 
@@ -481,7 +563,7 @@ function blob(x: number, y: number, r: number) {
 function drawPipes() {
   for (const pipe of pipes) {
     drawLeafPipe(pipe.x, 0, PIPE_W, pipe.gapY, true)
-    drawLeafPipe(pipe.x, pipe.gapY + GAP, PIPE_W, H - GROUND - (pipe.gapY + GAP), false)
+    drawLeafPipe(pipe.x, pipe.gapY + pipe.gap, PIPE_W, H - GROUND - (pipe.gapY + pipe.gap), false)
   }
 }
 
