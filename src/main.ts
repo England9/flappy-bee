@@ -1,5 +1,13 @@
 import './style.css'
 
+declare global {
+  interface Window {
+    __flappyBee: {
+      triggerWin: () => void
+    }
+  }
+}
+
 const params = new URLSearchParams(window.location.search)
 const WIN_SCORE = Math.max(1, Number(params.get('win') || 10) || 10)
 const GINZA_SITE = 'https://gin-pachi.jp'
@@ -56,11 +64,11 @@ const GROUND = 84
 const BEE_X = W * 0.28
 const BEE_R = 22
 const PIPE_W = 72
-const GAP = 168
-const PIPE_SPEED = 2.55
-const GRAVITY = 0.42
-const FLAP = -7.4
-const SPAWN_EVERY = 96
+const GAP = 178
+const PIPE_SPEED = 2.4
+const GRAVITY = 0.38
+const FLAP = -7.1
+const SPAWN_EVERY = 100
 
 let mode: Mode = 'ready'
 let beeY = H * 0.45
@@ -566,5 +574,16 @@ overlayEl.addEventListener('click', (e) => {
 resetGame()
 animId = requestAnimationFrame(loop)
 
-// Keep reference so bundlers don't tree-shake away intentional side effects
+// Dev/demo helper for screenshots and manual QA (not used by normal play)
+Object.assign(window, {
+  __flappyBee: {
+    triggerWin: () => {
+      score = WIN_SCORE
+      scoreEl.textContent = String(score)
+      scoreEl.classList.remove('hidden')
+      win()
+    },
+  },
+})
+
 void animId
