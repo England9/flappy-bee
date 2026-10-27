@@ -64,18 +64,20 @@ const GROUND = 84
 const BEE_X = W * 0.28
 const BEE_R = 22
 const PIPE_W = 72
-const GAP = 178
-const PIPE_SPEED = 2.4
-const GRAVITY = 0.38
-const FLAP = -7.1
-const SPAWN_EVERY = 85
+const GAP = 190
+const PIPE_SPEED = 2.15
+const GRAVITY = 0.28
+const FLAP = -6.2
+const MAX_FALL = 8.5
+const SPAWN_MS = 1450
 
 let mode: Mode = 'ready'
 let beeY = H * 0.45
 let beeVy = 0
 let beeRot = 0
 let wingPhase = 0
-let frame = 0
+let spawnTimer = 0
+let groundScroll = 0
 let pipes: Pipe[] = []
 let particles: Particle[] = []
 let score = 0
@@ -107,7 +109,8 @@ function resetGame() {
   beeVy = 0
   beeRot = 0
   wingPhase = 0
-  frame = 0
+  spawnTimer = 0
+  groundScroll = 0
   pipes = []
   particles = []
   score = 0
@@ -162,19 +165,23 @@ function randomGapY() {
 }
 
 function update(dt: number) {
-  wingPhase += dt * 0.028
+  // Normalize to a 60fps step so physics stay stable on high-refresh displays
+  const t = Math.min(dt, 32) / (1000 / 60)
+
+  wingPhase += t * 0.45
   for (const c of clouds) {
-    c.x -= c.speed * dt * 0.06
+    c.x -= c.speed * t
     if (c.x < -100) c.x = W + 60
   }
-  for (const f of flowers) f.bob += dt * 0.004
+  for (const f of flowers) f.bob += t * 0.065
+  groundScroll = (groundScroll + PIPE_SPEED * t) % (W + 40)
 
   for (let i = particles.length - 1; i >= 0; i--) {
     const p = particles[i]
-    p.x += p.vx * dt * 0.06
-    p.y += p.vy * dt * 0.06
-    p.vy += 0.05 * dt * 0.06
-    p.life -= dt * 0.0018
+    p.x += p.vx * t
+    p.y += p.vy * t
+    p.vy += 0.08 * t
+    p.life -= t * 0.03
     if (p.life <= 0) particles.splice(i, 1)
   }
 
@@ -186,17 +193,18 @@ function update(dt: number) {
 
   if (mode !== 'playing') return
 
-  frame += 1
-  beeVy += GRAVITY
-  beeY += beeVy
-  beeRot = Math.max(-0.55, Math.min(1.1, beeVy * 0.08))
+  beeVy = Math.min(MAX_FALL, beeVy + GRAVITY * t)
+  beeY += beeVy * t
+  beeRot = Math.max(-0.55, Math.min(1.1, beeVy * 0.09))
 
-  if (frame % SPAWN_EVERY === 0) {
+  spawnTimer += dt
+  if (spawnTimer >= SPAWN_MS) {
+    spawnTimer = 0
     pipes.push({ x: W + 20, gapY: randomGapY(), scored: false })
   }
 
   for (const pipe of pipes) {
-    pipe.x -= PIPE_SPEED
+    pipe.x -= PIPE_SPEED * t
     if (!pipe.scored && pipe.x + PIPE_W < BEE_X - BEE_R * 0.2) {
       pipe.scored = true
       score += 1
@@ -402,7 +410,7 @@ function drawGround() {
   ctx.fillRect(0, y, W, 10)
 
   for (const f of flowers) {
-    const fx = ((f.x - frame * 0.8) % (W + 40) + W + 40) % (W + 40) - 20
+    const fx = ((f.x - groundScroll) % (W + 40) + W + 40) % (W + 40) - 20
     const fy = y + 28 + Math.sin(f.bob) * 3
     drawFlower(fx, fy, f.hue)
   }
