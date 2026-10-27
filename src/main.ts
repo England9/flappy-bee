@@ -68,7 +68,7 @@ const GAP = 178
 const PIPE_SPEED = 2.4
 const GRAVITY = 0.38
 const FLAP = -7.1
-const SPAWN_EVERY = 100
+const SPAWN_EVERY = 85
 
 let mode: Mode = 'ready'
 let beeY = H * 0.45
