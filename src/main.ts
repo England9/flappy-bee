@@ -4,6 +4,13 @@ declare global {
   interface Window {
     __flappyBee: {
       triggerWin: () => void
+      state: () => {
+        mode: string
+        beeY: number
+        beeVy: number
+        score: number
+        pipes: number
+      }
     }
   }
 }
@@ -69,7 +76,8 @@ const PIPE_SPEED = 2.15
 const GRAVITY = 0.28
 const FLAP = -6.2
 const MAX_FALL = 8.5
-const SPAWN_MS = 1450
+const SPAWN_MS = 1600
+const FIRST_PIPE_MS = 2200
 
 let mode: Mode = 'ready'
 let beeY = H * 0.45
@@ -109,7 +117,7 @@ function resetGame() {
   beeVy = 0
   beeRot = 0
   wingPhase = 0
-  spawnTimer = 0
+  spawnTimer = SPAWN_MS - FIRST_PIPE_MS
   groundScroll = 0
   pipes = []
   particles = []
@@ -125,6 +133,7 @@ function startPlaying() {
   if (mode === 'playing') return
   mode = 'playing'
   beeVy = FLAP
+  spawnTimer = SPAWN_MS - FIRST_PIPE_MS
   hintEl.classList.add('hidden')
   scoreEl.classList.remove('hidden')
   hideOverlay()
@@ -237,7 +246,7 @@ function update(dt: number) {
 function hitsPipe(pipe: Pipe) {
   const bx = BEE_X
   const by = beeY
-  const r = BEE_R * 0.72
+  const r = BEE_R * 0.62
   const left = pipe.x
   const right = pipe.x + PIPE_W
   if (bx + r < left || bx - r > right) return false
@@ -591,6 +600,7 @@ Object.assign(window, {
       scoreEl.classList.remove('hidden')
       win()
     },
+    state: () => ({ mode, beeY, beeVy, score, pipes: pipes.length }),
   },
 })
 
