@@ -1,6 +1,7 @@
 import './style.css'
 
-const WIN_SCORE = 10
+const params = new URLSearchParams(window.location.search)
+const WIN_SCORE = Math.max(1, Number(params.get('win') || 10) || 10)
 const GINZA_SITE = 'https://gin-pachi.jp'
 const GINZA_DONATE = 'https://syncable.biz/associate/ginpachi/donate'
 
