@@ -70,7 +70,6 @@ const H = canvas.height
 const GROUND = 84
 const BEE_X = W * 0.28
 const BEE_R = 22
-const BEE_DRAW = 64
 const PIPE_W = 72
 const GAP = 190
 const PIPE_SPEED = 2.15
@@ -94,9 +93,6 @@ let clouds = createClouds()
 let flowers = createFlowers()
 let lastTs = 0
 let animId = 0
-
-const beeSprite = new Image()
-beeSprite.src = '/bee.png'
 
 function createClouds() {
   return Array.from({ length: 5 }, (_, i) => ({
@@ -279,7 +275,13 @@ function hideOverlay() {
 function showOverlay(kind: 'dead' | 'won') {
   const beeMark = `
     <div class="emoji-bee" aria-hidden="true">
-      <img src="/bee.png" width="56" height="56" alt="" />
+      <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
+        <ellipse cx="32" cy="36" rx="16" ry="12" fill="#F5C542"/>
+        <path d="M20 32h24M20 38h24M20 44h24" stroke="#2A2118" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="44" cy="28" r="8" fill="#2A2118"/>
+        <circle cx="47" cy="26" r="2.2" fill="#fff"/>
+        <ellipse cx="22" cy="24" rx="10" ry="7" fill="#B8E4FF" fill-opacity=".85" transform="rotate(-18 22 24)"/>
+      </svg>
     </div>`
 
   if (kind === 'won') {
@@ -445,19 +447,84 @@ function drawBee() {
   ctx.translate(BEE_X, beeY)
   ctx.rotate(beeRot)
 
-  const bob = mode === 'ready' ? Math.sin(wingPhase * 1.6) * 2 : 0
-  const pulse = 1 + Math.sin(wingPhase * (mode === 'playing' ? 14 : 6)) * 0.04
+  const flap = Math.sin(wingPhase * (mode === 'playing' ? 18 : 8))
 
-  if (beeSprite.complete && beeSprite.naturalWidth > 0) {
-    const size = BEE_DRAW * pulse
-    ctx.drawImage(beeSprite, -size * 0.52, -size * 0.52 + bob, size, size)
-  } else {
-    // Fallback while the sprite loads
-    ctx.fillStyle = '#f5c542'
+  // wings
+  ctx.fillStyle = 'rgba(190, 230, 255, 0.75)'
+  ctx.save()
+  ctx.rotate(-0.5 + flap * 0.35)
+  ctx.beginPath()
+  ctx.ellipse(-8, -16, 16, 9, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+
+  ctx.save()
+  ctx.rotate(0.35 - flap * 0.35)
+  ctx.fillStyle = 'rgba(210, 240, 255, 0.65)'
+  ctx.beginPath()
+  ctx.ellipse(-14, -4, 14, 8, 0, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.restore()
+
+  // body
+  const body = ctx.createLinearGradient(-18, 0, 18, 0)
+  body.addColorStop(0, '#f7d056')
+  body.addColorStop(1, '#e9a820')
+  ctx.fillStyle = body
+  ctx.beginPath()
+  ctx.ellipse(0, 0, 20, 14, 0, 0, Math.PI * 2)
+  ctx.fill()
+
+  // stripes
+  ctx.strokeStyle = '#2a2118'
+  ctx.lineWidth = 4.5
+  ctx.lineCap = 'round'
+  for (const sx of [-8, 0, 8]) {
     ctx.beginPath()
-    ctx.ellipse(0, bob, 18, 12, 0, 0, Math.PI * 2)
-    ctx.fill()
+    ctx.moveTo(sx, -11)
+    ctx.lineTo(sx, 11)
+    ctx.stroke()
   }
+
+  // head
+  ctx.fillStyle = '#2a2118'
+  ctx.beginPath()
+  ctx.arc(16, -2, 9, 0, Math.PI * 2)
+  ctx.fill()
+
+  // eye
+  ctx.fillStyle = '#fff'
+  ctx.beginPath()
+  ctx.arc(19, -4, 2.6, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = '#1a140f'
+  ctx.beginPath()
+  ctx.arc(19.6, -4, 1.2, 0, Math.PI * 2)
+  ctx.fill()
+
+  // antennae
+  ctx.strokeStyle = '#2a2118'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(18, -10)
+  ctx.quadraticCurveTo(22, -22, 28, -18)
+  ctx.moveTo(14, -10)
+  ctx.quadraticCurveTo(14, -24, 22, -22)
+  ctx.stroke()
+  ctx.fillStyle = '#2a2118'
+  ctx.beginPath()
+  ctx.arc(28, -18, 2, 0, Math.PI * 2)
+  ctx.arc(22, -22, 2, 0, Math.PI * 2)
+  ctx.fill()
+
+  // stinger hint
+  ctx.fillStyle = '#2a2118'
+  ctx.beginPath()
+  ctx.moveTo(-20, 0)
+  ctx.lineTo(-27, -3)
+  ctx.lineTo(-27, 3)
+  ctx.closePath()
+  ctx.fill()
 
   ctx.restore()
 }

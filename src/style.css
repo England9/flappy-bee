@@ -177,15 +177,10 @@ body {
 }
 
 .panel .emoji-bee {
-  line-height: 0;
+  font-size: 2.4rem;
+  line-height: 1;
   margin-bottom: 8px;
   animation: wing-wiggle 0.9s ease-in-out infinite;
-}
-
-.panel .emoji-bee img {
-  display: block;
-  margin: 0 auto;
-  image-rendering: auto;
 }
 
 .panel h2 {
