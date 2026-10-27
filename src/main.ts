@@ -248,9 +248,20 @@ function hideOverlay() {
 }
 
 function showOverlay(kind: 'dead' | 'won') {
+  const beeMark = `
+    <div class="emoji-bee" aria-hidden="true">
+      <svg width="48" height="48" viewBox="0 0 64 64" fill="none">
+        <ellipse cx="32" cy="36" rx="16" ry="12" fill="#F5C542"/>
+        <path d="M20 32h24M20 38h24M20 44h24" stroke="#2A2118" stroke-width="3.5" stroke-linecap="round"/>
+        <circle cx="44" cy="28" r="8" fill="#2A2118"/>
+        <circle cx="47" cy="26" r="2.2" fill="#fff"/>
+        <ellipse cx="22" cy="24" rx="10" ry="7" fill="#B8E4FF" fill-opacity=".85" transform="rotate(-18 22 24)"/>
+      </svg>
+    </div>`
+
   if (kind === 'won') {
     panelEl.innerHTML = `
-      <div class="emoji-bee" aria-hidden="true">🐝</div>
+      ${beeMark}
       <h2>You made it!</h2>
       <p>
         Score ${WIN_SCORE} — the hive is buzzing.
@@ -270,7 +281,7 @@ function showOverlay(kind: 'dead' | 'won') {
     `
   } else {
     panelEl.innerHTML = `
-      <div class="emoji-bee" aria-hidden="true">🐝</div>
+      ${beeMark}
       <h2>Ouch!</h2>
       <p>Score: <strong>${score}</strong> / ${WIN_SCORE}. Reach ${WIN_SCORE} to help the hive — and support Ginza’s bees.</p>
       <div class="actions">
