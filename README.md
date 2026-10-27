@@ -22,6 +22,8 @@ npm run build
 npm run preview
 ```
 
+The player bee sprite lives at `public/bee.png`.
+
 ## Links
 
 - Project site: [gin-pachi.jp](https://gin-pachi.jp)
